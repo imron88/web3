@@ -1,3 +1,6 @@
+## Contract Address
+0x606ab54655e0dfe17fe1031411d8636dc75e1cba6d2b2ab40504649030656880
+
 # P2P E-Commerce Marketplace on Aptos Blockchain
 
 A decentralized peer-to-peer marketplace built on the Aptos blockchain with optional EVM/MetaMask support. Buy and sell products using cryptocurrency with secure, transparent transactions.
