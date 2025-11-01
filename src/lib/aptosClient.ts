@@ -5,12 +5,16 @@ export const aptosClient = new Aptos(config);
 
 export const DECIMALS = 100000000; // 8 decimal places for APT
 
+interface CoinStoreData {
+  coin: {
+    value: string;
+  };
+}
+
 export async function getTokenBalance(
   address: string,
   maxRetries: number = 5,
 ): Promise<number> {
-  let lastError: Error | null = null;
-
   // Validate address format (0x followed by 64 hex characters)
   if (!/^0x[a-fA-F0-9]{64}$/.test(address)) {
     throw new Error(`Invalid Aptos address format: ${address}`);
@@ -32,13 +36,13 @@ export async function getTokenBalance(
         );
       }
 
-      const balance = (accountResource.data as any).coin.value;
+      const balance = (accountResource.data as CoinStoreData).coin.value;
       return parseInt(balance) / DECIMALS;
-    } catch (error: any) {
-      lastError = error;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
 
       // Check if it's an account not found error
-      if (error.message?.includes("account_not_found")) {
+      if (errorMessage.includes("account_not_found")) {
         console.warn(
           `Account ${address} not found, attempt ${i + 1}/${maxRetries}`,
         );

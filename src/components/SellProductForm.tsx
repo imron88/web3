@@ -42,11 +42,11 @@ export const SellProductForm: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      const { data, error } = await supabase.from('products').insert([{
+      const { error } = await supabase.from('products').insert([{
         ...formData,
         seller_address: account.address,
         status: 'active'
-      }]).select();
+      }]);
 
       if (error) {
         console.error('Supabase error:', error);

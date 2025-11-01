@@ -4,9 +4,16 @@ import { Wallet } from "lucide-react";
 import toast from "react-hot-toast";
 
 // Declare window.aptos for TypeScript
+interface AptosProvider {
+  connect?: () => Promise<void>;
+  disconnect?: () => Promise<void>;
+  account?: () => Promise<{ address: string }>;
+  isConnected?: () => boolean;
+}
+
 declare global {
   interface Window {
-    aptos?: any;
+    aptos?: AptosProvider;
   }
 }
 

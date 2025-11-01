@@ -1,47 +1,49 @@
-import { aptosClient } from "./aptosClient";
 import toast from "react-hot-toast";
 
 // Store original fetch to prevent console pollution
 const originalFetch = window.fetch;
 
+interface TransactionResponse {
+  success?: boolean;
+  vm_status?: string;
+  type?: string;
+  [key: string]: unknown;
+}
+
 // Quietly poll for transaction without any console errors
-async function waitForTransactionQuietly(txHash: string): Promise<any> {
+async function waitForTransactionQuietly(txHash: string): Promise<TransactionResponse> {
   // Temporarily override console.error to suppress 404 logs
   const originalConsoleError = console.error;
   const originalConsoleWarn = console.warn;
 
-  try {
-    // Suppress console errors during fetch
-    console.error = () => {};
-    console.warn = () => {};
+  // Suppress console errors during fetch
+  console.error = () => {};
+  console.warn = () => {};
 
-    // Use direct fetch instead of SDK to avoid automatic error logging
-    const response = await originalFetch(
-      `https://api.testnet.aptoslabs.com/v1/transactions/by_hash/${txHash}`,
-      {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      },
-    );
+  // Use direct fetch instead of SDK to avoid automatic error logging
+  const response = await originalFetch(
+    `https://api.testnet.aptoslabs.com/v1/transactions/by_hash/${txHash}`,
+    {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    },
+  );
 
-    // Restore console immediately after fetch
-    console.error = originalConsoleError;
-    console.warn = originalConsoleWarn;
+  // Restore console immediately after fetch
+  console.error = originalConsoleError;
+  console.warn = originalConsoleWarn;
 
-    if (response.status === 404) {
-      // Transaction not indexed yet - throw error to trigger retry
-      throw { status: 404, message: "Transaction not found yet" };
-    }
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const result = await response.json();
-    return result;
-  } catch (err: any) {
-    throw err;
+  if (response.status === 404) {
+    // Transaction not indexed yet - throw error to trigger retry
+    throw { status: 404, message: "Transaction not found yet" };
   }
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  const result = await response.json() as TransactionResponse;
+  return result;
 }
 
 // Legacy transaction payload type for wallet adapter compatibility
@@ -49,7 +51,7 @@ export type TransactionPayload = {
   type: "entry_function_payload";
   function: string;
   type_arguments: string[];
-  arguments: any[];
+  arguments: unknown[];
 };
 
 export interface TransactionOptions {
@@ -60,10 +62,10 @@ export interface TransactionOptions {
 
 export class TransactionService {
   static async submitTransaction(
-    // wallet adapters often accept an options arg after the payload (wallet implementations vary), so allow any
+    // wallet adapters often accept an options arg after the payload (wallet implementations vary)
     signAndSubmitTransaction: (
       payload: TransactionPayload,
-      opts?: any,
+      opts?: Record<string, string | number | undefined>,
     ) => Promise<{ hash: string }>,
     payload: TransactionPayload,
     options: TransactionOptions = {},
@@ -76,9 +78,9 @@ export class TransactionService {
 
     try {
       // Submit the transaction. Pass gas options through to the wallet adapter when available.
-      const walletOpts: any = {};
+      const walletOpts: Record<string, string> = {};
       // Provide multiple key formats for compatibility with different wallet adapters
-      const optsAny: any = options as any;
+      const optsAny = options as Record<string, string | number | undefined>;
       const maxGas =
         optsAny.maxGasAmount ||
         optsAny.max_gas_amount ||
@@ -111,7 +113,7 @@ export class TransactionService {
       // MAX_GAS_UNITS_BELOW_MIN_TRANSACTION_GAS_UNITS by increasing max_gas_amount.
       let attempt = 0;
       const maxAttempts = 5;
-      let lastError: any = null;
+      let lastError: Error | null = null;
 
       let txHash: string | null = null;
       while (attempt < maxAttempts) {
@@ -120,14 +122,15 @@ export class TransactionService {
           txHash = res?.hash;
           // success
           break;
-        } catch (err: any) {
-          lastError = err;
+        } catch (err: unknown) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          lastError = err instanceof Error ? err : new Error(errorMessage);
           console.warn(
             `TransactionService: submit attempt ${attempt + 1} failed`,
-            err?.message || err,
+            errorMessage,
           );
 
-          const msg = (err && (err.message || JSON.stringify(err))) || "";
+          const msg = errorMessage || "";
           if (
             msg.includes("MAX_GAS_UNITS_BELOW_MIN_TRANSACTION_GAS_UNITS") &&
             attempt < maxAttempts - 1
@@ -168,8 +171,7 @@ export class TransactionService {
       // Some wallets return a hash before the fullnode has indexed it; poll with backoff when transaction_not_found.
       const maxWaitAttempts = 30;
       let waitAttempt = 0;
-      let waitResult: any = null;
-      let lastWaitError: any = null;
+      let waitResult: TransactionResponse | null = null;
 
       // Add initial delay before first attempt - transactions may need time to propagate
       console.log(`🚀 Transaction submitted: ${txHash}`);
@@ -186,17 +188,12 @@ export class TransactionService {
           console.log(`✅ Transaction found on attempt ${waitAttempt + 1}!`);
           console.log("📦 Raw response:", JSON.stringify(waitResult, null, 2));
           break;
-        } catch (err: any) {
-          lastWaitError = err;
-
+        } catch (err: unknown) {
           // Build comprehensive error message string (case-insensitive search)
+          const errorObj = err as { message?: string; status?: number; statusCode?: number; response?: { status?: number; statusCode?: number; data?: string }; code?: number };
+          const errMsg = err && typeof err === 'object' && 'toString' in err ? String(err.toString()) : String(err);
           const msg =
-            (err &&
-              (err.message ||
-                err.toString() ||
-                JSON.stringify(err) ||
-                String(err))) ||
-            "";
+            (errorObj?.message || errMsg || "");
           const msgLower = msg.toLowerCase();
 
           // Check for various forms of "transaction not found" errors:
@@ -210,14 +207,14 @@ export class TransactionService {
             msgLower.includes("not found") ||
             msgLower.includes("404") ||
             msgLower.includes("/transactions/by_hash") ||
-            err?.statusCode === 404 ||
-            err?.status === 404 ||
-            err?.response?.status === 404 ||
-            err?.response?.statusCode === 404 ||
-            err?.code === 404 ||
-            (err?.response?.data &&
-              typeof err.response.data === "string" &&
-              err.response.data.toLowerCase().includes("not found"));
+            errorObj?.statusCode === 404 ||
+            errorObj?.status === 404 ||
+            errorObj?.response?.status === 404 ||
+            errorObj?.response?.statusCode === 404 ||
+            errorObj?.code === 404 ||
+            (errorObj?.response?.data &&
+              typeof errorObj.response.data === "string" &&
+              errorObj.response.data.toLowerCase().includes("not found"));
 
           // If the node hasn't indexed the transaction yet, wait and retry
           if (isTransactionNotFound) {
@@ -305,9 +302,9 @@ export class TransactionService {
             (waitResult?.vm_status || "Unknown error"),
         );
       }
-    } catch (error: any) {
-      console.error("❌ Transaction error:", error.message || error);
-      const errorMsg = error.message || "Transaction failed";
+    } catch (error: unknown) {
+      const errorMsg = error instanceof Error ? error.message : "Transaction failed";
+      console.error("❌ Transaction error:", errorMsg);
       toast.error("❌ " + errorMsg, { duration: 6000 });
       return false;
     }

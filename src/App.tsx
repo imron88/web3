@@ -1,11 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect } from "react";
 import {
   BrowserRouter as Router,
   Routes,
   Route,
   Link,
   Navigate,
-  useLocation,
 } from "react-router-dom";
 import { WalletConnect } from "./components/WalletConnect";
 import { EvmWalletConnect } from "./components/EvmWalletConnect";
@@ -31,15 +30,6 @@ import {
   TrendingUp,
   Loader2,
   ShoppingCart,
-  CheckCircle2,
-  Clock,
-  Lock,
-  Globe,
-  Award,
-  Heart,
-  MessageSquare,
-  ArrowUpRight,
-  ChevronRight,
   Network,
 } from "lucide-react";
 import { Toaster } from "react-hot-toast";
@@ -51,12 +41,8 @@ import { DECIMALS } from "./lib/aptosClient";
 import { TransactionService, TransactionPayload } from "./lib/transactions";
 
 function App() {
-  const [hasVisited, setHasVisited] = useState(false);
-
   useEffect(() => {
-    const visited = localStorage.getItem("hasVisited");
-    if (!visited) {
-      setHasVisited(true);
+    if (!localStorage.getItem("hasVisited")) {
       localStorage.setItem("hasVisited", "true");
     }
   }, []);
@@ -505,17 +491,27 @@ function ProductList() {
   React.useEffect(() => {
     const detect = async () => {
       try {
-        if (typeof window !== "undefined" && (window as any).ethereum) {
+        interface EthereumProvider {
+          request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+          on?: (event: string, handler: (...args: unknown[]) => void) => void;
+          removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
+        }
+        interface WindowWithEthereum extends Window {
+          ethereum?: EthereumProvider;
+        }
+        const win = window as WindowWithEthereum;
+        if (typeof window !== "undefined" && win.ethereum) {
           const mod = await import("ethers");
-          const provider = new mod.BrowserProvider((window as any).ethereum);
-          const accounts: string[] = await provider.send("eth_accounts", []);
+          const provider = new mod.BrowserProvider(win.ethereum);
+          const accounts: string[] = await provider.send("eth_accounts", []) as string[];
           if (accounts && accounts.length) setEvmAccount(accounts[0]);
 
           // listen for account changes
-          (window as any).ethereum.on?.(
+          win.ethereum.on?.(
             "accountsChanged",
-            (accounts: string[]) => {
-              if (accounts && accounts.length) setEvmAccount(accounts[0]);
+            (accounts: unknown) => {
+              const accountList = accounts as string[];
+              if (accountList && accountList.length) setEvmAccount(accountList[0]);
               else setEvmAccount(null);
             },
           );
@@ -584,13 +580,21 @@ function ProductList() {
       } else if (
         evmAccount &&
         typeof window !== "undefined" &&
-        (window as any).ethereum
+        (window as { ethereum?: { request?: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum
       ) {
         // EVM (MetaMask) fallback: send native token via ethers
         const mod = await import("ethers");
+        interface EthereumProvider {
+          request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+        }
+        interface WindowWithEthereum extends Window {
+          ethereum?: EthereumProvider;
+        }
+        const win = window as WindowWithEthereum;
+        const ethersLib = mod as typeof import("ethers");
 
         // If seller address isn't a valid EVM address, inform the user (likely an Aptos-only listing)
-        if (!mod.isAddress(product.seller_address)) {
+        if (!ethersLib.isAddress(product.seller_address)) {
           toast.dismiss();
           toast.error(
             "This product was listed with an Aptos address. Please connect Petra (Aptos) wallet to purchase.",
@@ -598,11 +602,11 @@ function ProductList() {
           return;
         }
 
-        const provider = new mod.BrowserProvider((window as any).ethereum);
+        const provider = new ethersLib.BrowserProvider(win.ethereum);
         const signer = await provider.getSigner();
 
         // Convert product.price (assumed in ETH-like units) to wei
-        const value = mod.parseEther(String(product.price));
+        const value = ethersLib.parseEther(String(product.price));
 
         const tx = await signer.sendTransaction({
           to: product.seller_address,
@@ -628,8 +632,9 @@ function ProductList() {
       } else {
         fetchProducts();
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("Purchase error:", error);
+      toast.error("Failed to process purchase");
     } finally {
       setProcessingId(null);
     }

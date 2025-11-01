@@ -2,48 +2,62 @@ import React, { useEffect, useState } from 'react';
 import { ethers } from 'ethers';
 import { Wallet } from 'lucide-react';
 
+interface EthereumProvider {
+  request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on?: (event: string, handler: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
+}
+
+interface WindowWithEthereum extends Window {
+  ethereum?: EthereumProvider;
+}
+
 export const EvmWalletConnect: React.FC = () => {
   const [provider, setProvider] = useState<ethers.BrowserProvider | null>(null);
   const [account, setAccount] = useState<string | null>(null);
   const [chainId, setChainId] = useState<bigint | null>(null);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && (window as any).ethereum) {
-      const p = new ethers.BrowserProvider((window as any).ethereum);
+    const win = window as WindowWithEthereum;
+    if (typeof window !== 'undefined' && win.ethereum) {
+      const p = new ethers.BrowserProvider(win.ethereum);
       setProvider(p);
 
       // detect accounts if already connected
       p.send('eth_accounts', [])
-        .then((accounts: string[]) => {
-          if (accounts && accounts.length) setAccount(ethers.getAddress(accounts[0]));
+        .then((accounts: unknown) => {
+          const accountList = accounts as string[];
+          if (accountList && accountList.length) setAccount(ethers.getAddress(accountList[0]));
         })
         .catch(() => {});
 
       // get chain id
-  p.getNetwork().then((n: any) => setChainId(n.chainId as bigint)).catch(() => {});
+      p.getNetwork().then((n) => setChainId(n.chainId)).catch(() => {});
 
       // listeners
-      const handleAccountsChanged = (accounts: string[]) => {
-        if (accounts && accounts.length) setAccount(ethers.getAddress(accounts[0]));
+      const handleAccountsChanged = (accounts: unknown) => {
+        const accountList = accounts as string[];
+        if (accountList && accountList.length) setAccount(ethers.getAddress(accountList[0]));
         else setAccount(null);
       };
 
-      const handleChainChanged = (chain: string) => {
+      const handleChainChanged = (chain: unknown) => {
         try {
           // MetaMask returns hex string like '0x1'
-          const parsed = BigInt(chain);
+          const chainStr = String(chain);
+          const parsed = BigInt(chainStr);
           setChainId(parsed);
         } catch {
           setChainId(null);
         }
       };
 
-      (window as any).ethereum.on?.('accountsChanged', handleAccountsChanged);
-      (window as any).ethereum.on?.('chainChanged', handleChainChanged);
+      win.ethereum.on?.('accountsChanged', handleAccountsChanged);
+      win.ethereum.on?.('chainChanged', handleChainChanged);
 
       return () => {
-        (window as any).ethereum.removeListener?.('accountsChanged', handleAccountsChanged);
-        (window as any).ethereum.removeListener?.('chainChanged', handleChainChanged);
+        win.ethereum?.removeListener?.('accountsChanged', handleAccountsChanged);
+        win.ethereum?.removeListener?.('chainChanged', handleChainChanged);
       };
     }
   }, []);
@@ -55,10 +69,10 @@ export const EvmWalletConnect: React.FC = () => {
     }
 
     try {
-      const accounts = await (provider as ethers.BrowserProvider).send('eth_requestAccounts', []);
+      const accounts = await (provider as ethers.BrowserProvider).send('eth_requestAccounts', []) as string[];
       if (accounts && accounts.length) setAccount(ethers.getAddress(accounts[0]));
       const net = await provider.getNetwork();
-      setChainId(net.chainId as bigint);
+      setChainId(net.chainId);
     } catch (err) {
       console.error('MetaMask connect error', err);
     }
